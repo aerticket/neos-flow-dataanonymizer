@@ -100,6 +100,35 @@ of the property:
   }
 ``` 
 
+## Custom Anonymization Action
+By implementing the `Aerticket\DataAnonymizer\Domain\Anonymizable` interface, you can implement a `anonymize` callback to be called by the `AnonymizationService`.
+This might be useful if you need to anonymize *part* of the data in your entity, e.g. certain keys in an array.  
+Additionally you need to implement the `createAnonymizationStateConstraints` function, returning query constraints to statically determine whether your entity needs anonymization.
+Depending on your entity this may be as simple as checking an `isAnonymized` property, but you may check for multiple fields:
+```php
+/**
+ * @param QueryInterface $query
+ * @return array
+ */
+public static function createAnonymizationStateConstraints(QueryInterface $query): array
+{
+    return [
+        $query->equals('name', 'Anon'),
+        $query->or([
+          $query->like('data', '%"anon@example.com"%'),
+          $query->like('data', '%"Anon Str. 12"%'),
+        ]),
+    ];
+}
+
+public function anonymize(): void {
+    $this->setName('Anon');
+    $data = $this->getData();
+    $data['street'] = 'Anon Str. 12';
+    $this->setData($data);
+}
+```
+
 ## Limitations
 
 The following limitations apply at the moment:

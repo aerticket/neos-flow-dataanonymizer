@@ -16,6 +16,7 @@ namespace Aerticket\DataAnonymizer\Service;
 use Aerticket\DataAnonymizer\Annotations\AnonymizableEntity;
 use Aerticket\DataAnonymizer\Annotations\Anonymize;
 use Aerticket\DataAnonymizer\AnonymizationException;
+use Aerticket\DataAnonymizer\Domain\Anonymizable;
 use Neos\Flow\ObjectManagement\ObjectManagerInterface;
 use Neos\Flow\Persistence\Exception\IllegalObjectTypeException;
 use Neos\Flow\Persistence\Exception\UnknownObjectException;
@@ -114,6 +115,10 @@ class AnonymizationService
     {
         $classNames = $this->reflectionService->getClassNamesByAnnotation(AnonymizableEntity::class);
         return array_filter($classNames, function($className) {
+            $usesCustomAnonymization = $this->reflectionService->isClassImplementationOf($className, Anonymizable::class);
+            if ($usesCustomAnonymization) {
+                return true;
+            }
             // Only process this className if at least one property should be anonymized
             return count($this->getAnonymizedPropertyValuesFor($className)) > 0;
         });
@@ -172,12 +177,18 @@ class AnonymizationService
         $objects = $repository->findAll();
         $query = $objects->getQuery();
 
+        $usesCustomAnonymization = $this->reflectionService->isClassImplementationOf($className, Anonymizable::class);
+
         $anonymizedPropertyValues = $this->getAnonymizedPropertyValuesFor($className);
 
-        // Build property constraints to retrieve only non anonymized entities
-        $propertyConstraints = [];
-        foreach ($anonymizedPropertyValues as $propertyName => $propertyValue) {
-            $propertyConstraints[] = $query->equals($propertyName, $propertyValue);
+        if ($usesCustomAnonymization) {
+            $propertyConstraints = call_user_func([$className, 'createAnonymizationStateConstraints'], $query);
+        } else {
+            // Build property constraints to retrieve only non anonymized entities
+            $propertyConstraints = [];
+            foreach ($anonymizedPropertyValues as $propertyName => $propertyValue) {
+                $propertyConstraints[] = $query->equals($propertyName, $propertyValue);
+            }
         }
 
         // Only objects with a referenceDate before the anonymizeAfterDate should be anonymized
@@ -222,11 +233,15 @@ class AnonymizationService
      */
     protected function anonymizeProperties($object, $propertyValues)
     {
-        foreach ($propertyValues as $propertyName => $propertyValue) {
-            if (ObjectAccess::isPropertySettable($object, $propertyName)) {
-                ObjectAccess::setProperty($object, $propertyName, $propertyValue);
-            } else {
-                ObjectAccess::setProperty($object, $propertyName, $propertyValue, true);
+        if (($object instanceof Anonymizable) && is_callable([$object, 'anonymize'])) {
+            $object->anonymize();
+        } else {
+            foreach ($propertyValues as $propertyName => $propertyValue) {
+                if (ObjectAccess::isPropertySettable($object, $propertyName)) {
+                    ObjectAccess::setProperty($object, $propertyName, $propertyValue);
+                } else {
+                    ObjectAccess::setProperty($object, $propertyName, $propertyValue, true);
+                }
             }
         }
     }
